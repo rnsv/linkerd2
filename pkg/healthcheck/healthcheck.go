@@ -288,6 +288,11 @@ type Checker struct {
 	// (default false)
 	fatal bool
 
+	// fail indicates that if this check fails, it should be reported as failure,
+	// but continue with all the other checks (default false)
+	// (default false)
+	fail bool
+
 	// warning indicates that if this check fails, it should be reported, but it
 	// should not impact the overall outcome of the health check (default false)
 	warning bool
@@ -653,7 +658,7 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "heartbeat ServiceAccount exist",
 					hintAnchor:  "l5d-existence-sa",
-					fatal:       true,
+					fail:        true,
 					check: func(ctx context.Context) error {
 						if hc.isHeartbeatDisabled() {
 							return nil
@@ -665,11 +670,14 @@ func (hc *HealthChecker) allCategories() []Category {
 					description:   "control plane replica sets are ready",
 					hintAnchor:    "l5d-existence-replicasets",
 					retryDeadline: hc.RetryDeadline,
-					fatal:         true,
+					fail:          true,
 					check: func(ctx context.Context) error {
 						controlPlaneReplicaSet, err := hc.kubeAPI.GetReplicaSets(ctx, hc.ControlPlaneNamespace)
 						if err != nil {
 							return err
+						}
+						if len(controlPlaneReplicaSet) == 0 {
+							return fmt.Errorf("control plane is not ready")
 						}
 						return checkControlPlaneReplicaSets(controlPlaneReplicaSet)
 					},
@@ -687,6 +695,9 @@ func (hc *HealthChecker) allCategories() []Category {
 						if err != nil {
 							return err
 						}
+						if len(controlPlanePods) == 0 {
+							return fmt.Errorf("control plane is not ready")
+						}
 						return checkUnschedulablePods(controlPlanePods)
 					},
 				},
@@ -695,7 +706,7 @@ func (hc *HealthChecker) allCategories() []Category {
 					hintAnchor:          "l5d-existence-controller",
 					retryDeadline:       hc.RetryDeadline,
 					surfaceErrorOnRetry: true,
-					fatal:               true,
+					fail:                true,
 					check: func(ctx context.Context) error {
 						// save this into hc.controlPlanePods, since this check only
 						// succeeds when all pods are up
@@ -711,7 +722,7 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "can initialize the client",
 					hintAnchor:  "l5d-existence-client",
-					fatal:       true,
+					fail:        true,
 					check: func(ctx context.Context) (err error) {
 						if hc.APIAddr != "" {
 							hc.apiClient, err = public.NewInternalClient(hc.ControlPlaneNamespace, hc.APIAddr)
@@ -725,8 +736,11 @@ func (hc *HealthChecker) allCategories() []Category {
 					description:   "can query the control plane API",
 					hintAnchor:    "l5d-existence-api",
 					retryDeadline: hc.RetryDeadline,
-					fatal:         true,
+					fail:          true,
 					check: func(ctx context.Context) (err error) {
+						if hc.apiClient == nil {
+							return fmt.Errorf("linkerd control plane is not running")
+						}
 						hc.serverVersion, err = GetServerVersion(ctx, hc.apiClient)
 						return
 					},
@@ -739,7 +753,7 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "control plane Namespace exists",
 					hintAnchor:  "l5d-existence-ns",
-					fatal:       true,
+					fail:        true,
 					check: func(ctx context.Context) error {
 						return hc.checkNamespace(ctx, hc.ControlPlaneNamespace, true)
 					},
@@ -747,7 +761,7 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "control plane ClusterRoles exist",
 					hintAnchor:  "l5d-existence-cr",
-					fatal:       true,
+					fail:        true,
 					check: func(ctx context.Context) error {
 						return hc.checkClusterRoles(ctx, true, hc.expectedRBACNames(), hc.controlPlaneComponentsSelector())
 					},
@@ -755,7 +769,7 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "control plane ClusterRoleBindings exist",
 					hintAnchor:  "l5d-existence-crb",
-					fatal:       true,
+					fail:        true,
 					check: func(ctx context.Context) error {
 						return hc.checkClusterRoleBindings(ctx, true, hc.expectedRBACNames(), hc.controlPlaneComponentsSelector())
 					},
@@ -763,7 +777,7 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "control plane ServiceAccounts exist",
 					hintAnchor:  "l5d-existence-sa",
-					fatal:       true,
+					fail:        true,
 					check: func(ctx context.Context) error {
 						return hc.checkServiceAccounts(ctx, ExpectedServiceAccountNames, hc.ControlPlaneNamespace, hc.controlPlaneComponentsSelector())
 					},
@@ -771,7 +785,7 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "control plane CustomResourceDefinitions exist",
 					hintAnchor:  "l5d-existence-crd",
-					fatal:       true,
+					fail:        true,
 					check: func(ctx context.Context) error {
 						return hc.checkCustomResourceDefinitions(ctx, true)
 					},
@@ -779,7 +793,7 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "control plane MutatingWebhookConfigurations exist",
 					hintAnchor:  "l5d-existence-mwc",
-					fatal:       true,
+					fail:        true,
 					check: func(ctx context.Context) error {
 						return hc.checkMutatingWebhookConfigurations(ctx, true)
 					},
@@ -787,7 +801,7 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "control plane ValidatingWebhookConfigurations exist",
 					hintAnchor:  "l5d-existence-vwc",
-					fatal:       true,
+					fail:        true,
 					check: func(ctx context.Context) error {
 						return hc.checkValidatingWebhookConfigurations(ctx, true)
 					},
@@ -795,7 +809,7 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "control plane PodSecurityPolicies exist",
 					hintAnchor:  "l5d-existence-psp",
-					fatal:       true,
+					fail:        true,
 					check: func(ctx context.Context) error {
 						return hc.checkPodSecurityPolicies(ctx, true)
 					},
@@ -808,7 +822,7 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "cni plugin ConfigMap exists",
 					hintAnchor:  "cni-plugin-cm-exists",
-					fatal:       true,
+					fail:        true,
 					check: func(ctx context.Context) error {
 						if !hc.CNIEnabled {
 							return &SkipError{Reason: linkerdCNIDisabledSkipReason}
@@ -820,7 +834,7 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "cni plugin PodSecurityPolicy exists",
 					hintAnchor:  "cni-plugin-psp-exists",
-					fatal:       true,
+					fail:        true,
 					check: func(ctx context.Context) error {
 						if !hc.CNIEnabled {
 							return &SkipError{Reason: linkerdCNIDisabledSkipReason}
@@ -836,7 +850,7 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "cni plugin ClusterRole exists",
 					hintAnchor:  "cni-plugin-cr-exists",
-					fatal:       true,
+					fail:        true,
 					check: func(ctx context.Context) error {
 						if !hc.CNIEnabled {
 							return &SkipError{Reason: linkerdCNIDisabledSkipReason}
@@ -851,7 +865,7 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "cni plugin ClusterRoleBinding exists",
 					hintAnchor:  "cni-plugin-crb-exists",
-					fatal:       true,
+					fail:        true,
 					check: func(ctx context.Context) error {
 						if !hc.CNIEnabled {
 							return &SkipError{Reason: linkerdCNIDisabledSkipReason}
@@ -866,7 +880,7 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "cni plugin Role exists",
 					hintAnchor:  "cni-plugin-r-exists",
-					fatal:       true,
+					fail:        true,
 					check: func(ctx context.Context) error {
 						if !hc.CNIEnabled {
 							return &SkipError{Reason: linkerdCNIDisabledSkipReason}
@@ -881,7 +895,7 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "cni plugin RoleBinding exists",
 					hintAnchor:  "cni-plugin-rb-exists",
-					fatal:       true,
+					fail:        true,
 					check: func(ctx context.Context) error {
 						if !hc.CNIEnabled {
 							return &SkipError{Reason: linkerdCNIDisabledSkipReason}
@@ -896,7 +910,7 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "cni plugin ServiceAccount exists",
 					hintAnchor:  "cni-plugin-sa-exists",
-					fatal:       true,
+					fail:        true,
 					check: func(ctx context.Context) error {
 						if !hc.CNIEnabled {
 							return &SkipError{Reason: linkerdCNIDisabledSkipReason}
@@ -911,7 +925,7 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "cni plugin DaemonSet exists",
 					hintAnchor:  "cni-plugin-ds-exists",
-					fatal:       true,
+					fail:        true,
 					check: func(ctx context.Context) (err error) {
 						if !hc.CNIEnabled {
 							return &SkipError{Reason: linkerdCNIDisabledSkipReason}
@@ -928,7 +942,7 @@ func (hc *HealthChecker) allCategories() []Category {
 					hintAnchor:          "cni-plugin-ready",
 					retryDeadline:       hc.RetryDeadline,
 					surfaceErrorOnRetry: true,
-					fatal:               true,
+					fail:                true,
 					check: func(ctx context.Context) (err error) {
 						if !hc.CNIEnabled {
 							return &SkipError{Reason: linkerdCNIDisabledSkipReason}
@@ -953,7 +967,7 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "certificate config is valid",
 					hintAnchor:  "l5d-identity-cert-config-valid",
-					fatal:       true,
+					fail:        true,
 					check: func(ctx context.Context) (err error) {
 						hc.issuerCert, hc.trustAnchors, err = hc.checkCertificatesConfig(ctx)
 						return
@@ -962,8 +976,11 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "trust anchors are using supported crypto algorithm",
 					hintAnchor:  "l5d-identity-trustAnchors-use-supported-crypto",
-					fatal:       true,
+					fail:        true,
 					check: func(context.Context) error {
+						if len(hc.trustAnchors) == 0 {
+							return fmt.Errorf("missing trustAnchors")
+						}
 						var invalidAnchors []string
 						for _, anchor := range hc.trustAnchors {
 							if err := issuercerts.CheckCertAlgoRequirements(anchor); err != nil {
@@ -979,8 +996,11 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "trust anchors are within their validity period",
 					hintAnchor:  "l5d-identity-trustAnchors-are-time-valid",
-					fatal:       true,
+					fail:        true,
 					check: func(ctx context.Context) error {
+						if len(hc.trustAnchors) == 0 {
+							return fmt.Errorf("missing trustAnchors")
+						}
 						var expiredAnchors []string
 						for _, anchor := range hc.trustAnchors {
 							if err := issuercerts.CheckCertValidityPeriod(anchor); err != nil {
@@ -999,6 +1019,9 @@ func (hc *HealthChecker) allCategories() []Category {
 					hintAnchor:  "l5d-identity-trustAnchors-not-expiring-soon",
 					warning:     true,
 					check: func(ctx context.Context) error {
+						if len(hc.trustAnchors) == 0 {
+							return fmt.Errorf("missing trustAnchors")
+						}
 						var expiringAnchors []string
 						for _, anchor := range hc.trustAnchors {
 							if err := issuercerts.CheckExpiringSoon(anchor); err != nil {
@@ -1014,8 +1037,11 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "issuer cert is using supported crypto algorithm",
 					hintAnchor:  "l5d-identity-issuer-cert-uses-supported-crypto",
-					fatal:       true,
+					fail:        true,
 					check: func(context.Context) error {
+						if hc.issuerCert == nil {
+							return fmt.Errorf("missing certificate Secret: linkerd-identity-issuer")
+						}
 						if err := issuercerts.CheckCertAlgoRequirements(hc.issuerCert.Certificate); err != nil {
 							return fmt.Errorf("issuer certificate %s", err)
 						}
@@ -1025,8 +1051,11 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "issuer cert is within its validity period",
 					hintAnchor:  "l5d-identity-issuer-cert-is-time-valid",
-					fatal:       true,
+					fail:        true,
 					check: func(ctx context.Context) error {
+						if hc.issuerCert == nil {
+							return fmt.Errorf("missing certificate Secret: linkerd-identity-issuer")
+						}
 						if err := issuercerts.CheckCertValidityPeriod(hc.issuerCert.Certificate); err != nil {
 							return fmt.Errorf("issuer certificate is %s", err)
 						}
@@ -1038,6 +1067,9 @@ func (hc *HealthChecker) allCategories() []Category {
 					warning:     true,
 					hintAnchor:  "l5d-identity-issuer-cert-not-expiring-soon",
 					check: func(context.Context) error {
+						if hc.issuerCert == nil {
+							return fmt.Errorf("missing certificate  Secret: linkerd-identity-issuer")
+						}
 						if err := issuercerts.CheckExpiringSoon(hc.issuerCert.Certificate); err != nil {
 							return fmt.Errorf("issuer certificate %s", err)
 						}
@@ -1048,6 +1080,9 @@ func (hc *HealthChecker) allCategories() []Category {
 					description: "issuer cert is issued by the trust anchor",
 					hintAnchor:  "l5d-identity-issuer-cert-issued-by-trust-anchor",
 					check: func(ctx context.Context) error {
+						if hc.trustAnchors == nil {
+							return fmt.Errorf("missing certificate Secret: linkerd-identity-issuer")
+						}
 						return hc.issuerCert.Verify(tls.CertificatesToPool(hc.trustAnchors), "", time.Time{})
 					},
 				},
@@ -1059,7 +1094,7 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "proxy-injector webhook has valid cert",
 					hintAnchor:  "l5d-proxy-injector-webhook-cert-valid",
-					fatal:       true,
+					fail:        true,
 					check: func(ctx context.Context) (err error) {
 						anchors, err := hc.fetchProxyInjectorCaBundle(ctx)
 						if err != nil {
@@ -1096,7 +1131,7 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "sp-validator webhook has valid cert",
 					hintAnchor:  "l5d-sp-validator-webhook-cert-valid",
-					fatal:       true,
+					fail:        true,
 					check: func(ctx context.Context) (err error) {
 						anchors, err := hc.fetchSpValidatorCaBundle(ctx)
 						if err != nil {
@@ -1152,7 +1187,7 @@ func (hc *HealthChecker) allCategories() []Category {
 					hintAnchor:          "l5d-api-control-ready",
 					retryDeadline:       hc.RetryDeadline,
 					surfaceErrorOnRetry: true,
-					fatal:               true,
+					fail:                true,
 					check: func(ctx context.Context) error {
 						var err error
 						hc.controlPlanePods, err = hc.kubeAPI.GetPodsByNamespace(ctx, hc.ControlPlaneNamespace)
@@ -1169,9 +1204,12 @@ func (hc *HealthChecker) allCategories() []Category {
 					// "waiting for check to complete" while things converge. If after the timeout
 					// it still hasn't converged, we show the real error (a 503 usually).
 					surfaceErrorOnRetry: false,
-					fatal:               true,
+					fail:                true,
 					retryDeadline:       hc.RetryDeadline,
 					checkRPC: func(ctx context.Context) (*healthcheckPb.SelfCheckResponse, error) {
+						if hc.apiClient == nil {
+							return nil, fmt.Errorf("linkerd control plane is not running")
+						}
 						return hc.apiClient.SelfCheck(ctx, &healthcheckPb.SelfCheckRequest{})
 					},
 				},
@@ -1237,7 +1275,7 @@ func (hc *HealthChecker) allCategories() []Category {
 				{
 					description: "data plane namespace exists",
 					hintAnchor:  "l5d-data-plane-exists",
-					fatal:       true,
+					fail:        true,
 					check: func(ctx context.Context) error {
 						if hc.DataPlaneNamespace == "" {
 							// when checking proxies in all namespaces, this check is a no-op
@@ -1441,7 +1479,7 @@ func (hc *HealthChecker) RunChecks(observer CheckObserver) bool {
 				checker := checker // pin
 				if checker.check != nil {
 					if !hc.runCheck(c.id, &checker, observer) {
-						if !checker.warning {
+						if !checker.warning || !checker.fail {
 							success = false
 						}
 						if checker.fatal {
@@ -1452,11 +1490,12 @@ func (hc *HealthChecker) RunChecks(observer CheckObserver) bool {
 
 				if checker.checkRPC != nil {
 					if !hc.runCheckRPC(c.id, &checker, observer) {
-						if !checker.warning {
+						if !checker.warning || !checker.fail {
 							success = false
 						}
 						if checker.fatal {
-							return success
+							success = false
+							//return success
 						}
 					}
 				}
